@@ -1,6 +1,7 @@
 // Room state and rules. Rooms in use are kept in memory for speed; every change
 // is also written to the database (server/db.js) so rooms survive restarts.
 import crypto from "node:crypto";
+import { isLanguage } from "./translate.js";
 
 export const LIMITS = {
   roomName: /^[a-z0-9][a-z0-9_-]{0,39}$/, // 1-40 chars, URL-safe
@@ -12,6 +13,7 @@ export const LIMITS = {
   roomImageBytes: 60_000_000, // all images kept in one room's history
   history: 500, // messages kept per room
   reactionsPerMessage: 20,
+  translationsPerMessage: 8, // cached languages kept per message
   colors: 7, // rainbow: red, orange, yellow, green, blue, indigo, violet
 };
 
@@ -154,6 +156,11 @@ export function publicMessage(msg) {
     src: msg.src,
     createdAt: msg.createdAt,
     editedAt: msg.editedAt,
+    lang: msg.lang ?? undefined, // the language it was written in
+    sentLang: msg.sentLang ?? undefined, // the language the author asked to send it as
+    translations: msg.translations && Object.keys(msg.translations).length ? msg.translations : undefined,
+    translating: msg.translating?.size ? [...msg.translating] : undefined, // languages being translated right now
+    translationFailed: msg.translationFailed || undefined,
     reactions: [...msg.reactions].map(([emoji, users]) => ({
       emoji,
       users: [...users].map(([authorId, name]) => ({ authorId, name })),
@@ -240,7 +247,7 @@ export class RoomStore {
     return room.isConnected(member.authorId) ? null : member;
   }
 
-  post(room, member, { tempId, kind, text, src }) {
+  post(room, member, { tempId, kind, text, src, lang, translateTo }) {
     text = typeof text === "string" ? text.trim() : "";
     if (text.length > LIMITS.text) throw new ChatError("too_large", `Messages are limited to ${LIMITS.text} characters.`);
     if (kind === "text") {
@@ -266,7 +273,12 @@ export class RoomStore {
       createdAt: Date.now(),
       editedAt: undefined,
       reactions: new Map(), // emoji -> Map(authorId -> name)
+      lang: isLanguage(lang) ? lang : null,
+      sentLang: null,
+      translations: {}, // lang -> translated text
     };
+    // Ask for a translation only when there's text, a known source language, and a different target.
+    if (text && message.lang && isLanguage(translateTo) && translateTo !== message.lang) message.sentLang = translateTo;
     const trimmed = room.add(message);
     this.db?.addMessage(room, message, trimmed);
     return message;
@@ -280,6 +292,8 @@ export class RoomStore {
     if (!text && msg.kind === "text") throw new ChatError("invalid", "A message can't be empty. Delete it instead.");
     msg.text = text || undefined;
     msg.editedAt = Date.now();
+    msg.translations = {}; // old translations no longer match the text
+    msg.translationFailed = false;
     room.lastActivity = Date.now();
     this.db?.updateMessage(room, msg);
     return msg;
@@ -309,6 +323,22 @@ export class RoomStore {
       }
       users.set(member.authorId, member.name);
     }
+    this.db?.updateMessage(room, msg);
+    return msg;
+  }
+
+  /** Saves a finished translation, if the message still exists and its text hasn't changed since. */
+  saveTranslation(room, id, sourceText, lang, translated) {
+    const msg = room.messages.find((m) => m.id === id);
+    if (!msg || msg.text !== sourceText) return null;
+    const langs = Object.keys(msg.translations);
+    if (!(lang in msg.translations) && langs.length >= LIMITS.translationsPerMessage) {
+      // Keep the author's chosen language; drop the oldest of the others.
+      const drop = langs.find((l) => l !== msg.sentLang);
+      if (drop) delete msg.translations[drop];
+    }
+    msg.translations[lang] = translated;
+    if (lang === msg.sentLang) msg.translationFailed = false;
     this.db?.updateMessage(room, msg);
     return msg;
   }

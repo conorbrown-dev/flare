@@ -50,6 +50,10 @@ export class Db {
     // Columns added after the first release; existing databases get them on startup.
     const columns = new Set(this.db.prepare("PRAGMA table_info(rooms)").all().map((c) => c.name));
     if (!columns.has("background")) this.db.exec("ALTER TABLE rooms ADD COLUMN background TEXT");
+    const msgColumns = new Set(this.db.prepare("PRAGMA table_info(messages)").all().map((c) => c.name));
+    if (!msgColumns.has("lang")) this.db.exec("ALTER TABLE messages ADD COLUMN lang TEXT");
+    if (!msgColumns.has("sent_lang")) this.db.exec("ALTER TABLE messages ADD COLUMN sent_lang TEXT");
+    if (!msgColumns.has("translations")) this.db.exec("ALTER TABLE messages ADD COLUMN translations TEXT NOT NULL DEFAULT '{}'");
     const q = (sql) => this.db.prepare(sql);
     this.q = {
       getRoom: q("SELECT * FROM rooms WHERE name = ?"),
@@ -59,9 +63,9 @@ export class Db {
       saveBackground: q("UPDATE rooms SET background = ? WHERE name = ?"),
       deleteRoom: q("DELETE FROM rooms WHERE name = ?"),
       getMessages: q("SELECT * FROM messages WHERE room = ? ORDER BY seq"),
-      insertMessage: q(`INSERT INTO messages (id, room, seq, temp_id, author_id, name, color, kind, text, src, created_at, edited_at, reactions)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
-      updateMessage: q("UPDATE messages SET text = ?, edited_at = ?, reactions = ? WHERE id = ?"),
+      insertMessage: q(`INSERT INTO messages (id, room, seq, temp_id, author_id, name, color, kind, text, src, created_at, edited_at, reactions, lang, sent_lang, translations)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+      updateMessage: q("UPDATE messages SET text = ?, edited_at = ?, reactions = ?, translations = ? WHERE id = ?"),
       deleteMessage: q("DELETE FROM messages WHERE id = ?"),
       staleRooms: q("SELECT name FROM rooms WHERE last_activity < ?"),
     };
@@ -92,6 +96,9 @@ export class Db {
         createdAt: m.created_at,
         editedAt: m.edited_at ?? undefined,
         reactions: reactionsFromJson(m.reactions),
+        lang: m.lang ?? null,
+        sentLang: m.sent_lang ?? null,
+        translations: JSON.parse(m.translations ?? "{}"),
       })),
     };
   }
@@ -112,7 +119,8 @@ export class Db {
   addMessage(room, m, trimmed) {
     this.transaction(() => {
       this.q.insertMessage.run(m.id, room.name, m.seq, m.tempId ?? null, m.authorId, m.name, m.color, m.kind,
-        m.text ?? null, m.src ?? null, m.createdAt, m.editedAt ?? null, reactionsToJson(m.reactions));
+        m.text ?? null, m.src ?? null, m.createdAt, m.editedAt ?? null, reactionsToJson(m.reactions),
+        m.lang ?? null, m.sentLang ?? null, JSON.stringify(m.translations ?? {}));
       for (const old of trimmed) this.q.deleteMessage.run(old.id);
       this.q.touchRoom.run(room.lastActivity, room.seq, room.name);
     });
@@ -120,7 +128,7 @@ export class Db {
 
   updateMessage(room, m) {
     this.transaction(() => {
-      this.q.updateMessage.run(m.text ?? null, m.editedAt ?? null, reactionsToJson(m.reactions), m.id);
+      this.q.updateMessage.run(m.text ?? null, m.editedAt ?? null, reactionsToJson(m.reactions), JSON.stringify(m.translations ?? {}), m.id);
       this.q.touchRoom.run(room.lastActivity, room.seq, room.name);
     });
   }

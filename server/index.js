@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { RoomStore, ChatError, publicMessage } from "./rooms.js";
 import { Db } from "./db.js";
+import { createTranslator, isLanguage } from "./translate.js";
 
 const PORT = Number(process.env.PORT ?? 3001);
 const GIPHY_API_KEY = process.env.GIPHY_API_KEY ?? "";
@@ -17,6 +18,7 @@ const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../dist
 
 const db = new Db(process.env.DATABASE_FILE ?? path.join(DATA_DIR, "flare.db"));
 const store = new RoomStore(db);
+const translator = createTranslator();
 
 // ---------- HTTP: room lookup, GIF search, built client ----------
 
@@ -86,7 +88,7 @@ function serveStatic(req, res) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://x");
   try {
-    if (url.pathname === "/api/config") return json(res, 200, { giphy: !!GIPHY_API_KEY });
+    if (url.pathname === "/api/config") return json(res, 200, { giphy: !!GIPHY_API_KEY, translation: translator.enabled });
     if (url.pathname.startsWith("/api/rooms/")) {
       const info = store.info(decodeURIComponent(url.pathname.slice("/api/rooms/".length)));
       return info ? json(res, 200, info) : json(res, 400, { error: "Room names use letters, numbers, - and _ (max 40)." });
@@ -117,6 +119,47 @@ function broadcast(room, msg) {
   for (const ws of room.connections.keys()) if (ws.readyState === ws.OPEN) ws.send(data);
 }
 
+/**
+ * Translates a message in the background. The message is already posted and
+ * in order; when the translation arrives it's saved and sent as an update.
+ * `only` limits the update to one connection (an on-demand request).
+ */
+function translateMessage(room, message, to, requester = null) {
+  const sourceText = message.text;
+  if (!translator.enabled || !sourceText || !message.lang || to === message.lang) return;
+  message.translating ??= new Set();
+  message.waiting ??= new Map(); // lang -> connections that asked for it
+  if (requester) {
+    if (!message.waiting.has(to)) message.waiting.set(to, new Set());
+    message.waiting.get(to).add(requester);
+  }
+  if (message.translating.has(to)) return; // already on its way; the requester is now waiting too
+  message.translating.add(to);
+  const takeWaiting = () => { const w = message.waiting.get(to) ?? new Set(); message.waiting.delete(to); return w; };
+  translator.translate(sourceText, message.lang, to)
+    .then((text) => {
+      message.translating.delete(to);
+      const waiting = takeWaiting();
+      const saved = store.saveTranslation(room, message.id, sourceText, to, text);
+      if (!saved || !store.rooms.has(room.name)) return;
+      const update = { type: "message_updated", message: publicMessage(saved) };
+      if (to === saved.sentLang) broadcast(room, update);
+      else for (const ws of waiting) send(ws, update);
+    })
+    .catch((err) => {
+      message.translating.delete(to);
+      const waiting = takeWaiting();
+      console.error(`translation ${message.lang}->${to} failed:`, err.message);
+      if (!store.rooms.has(room.name) || message.text !== sourceText) return;
+      if (to === message.sentLang) {
+        message.translationFailed = true;
+        broadcast(room, { type: "message_updated", message: publicMessage(message) });
+      } else {
+        for (const ws of waiting) send(ws, { type: "error", code: "translation_failed", message: "Couldn't translate that message right now.", request: "translate", id: message.id });
+      }
+    });
+}
+
 // Wrong-password attempts per IP+room: 5 tries, then a 60 second lockout.
 const attempts = new Map();
 function checkLockout(key) {
@@ -135,7 +178,9 @@ wss.on("connection", (ws, req) => {
   let room = null;
   let member = null;
   let tokens = 10; // message rate limit: bursts of 10, refilling 2 per second
+  let translateTokens = 20; // on-demand translations: bursts of 20, refilling 1 per 2 seconds
   const refill = setInterval(() => { tokens = Math.min(10, tokens + 1); }, 500);
+  const refillTranslate = setInterval(() => { translateTokens = Math.min(20, translateTokens + 1); }, 2000);
   ws.isAlive = true;
   ws.on("pong", () => { ws.isAlive = true; });
 
@@ -184,12 +229,19 @@ wss.on("connection", (ws, req) => {
       if (msg.type === "send") {
         if (tokens <= 0) throw new ChatError("rate_limited", "Slow down a little.");
         tokens -= 1;
+        if (!translator.enabled) delete msg.translateTo;
         const message = store.post(room, member, msg);
-        return broadcast(room, { type: "message", message: publicMessage(message) });
+        if (message.sentLang && translator.enabled) message.translating = new Set([message.sentLang]);
+        broadcast(room, { type: "message", message: publicMessage(message) });
+        if (message.sentLang) { message.translating?.clear(); translateMessage(room, message, message.sentLang); }
+        return;
       }
       if (msg.type === "edit") {
         const message = store.edit(room, member, msg);
-        return broadcast(room, { type: "message_updated", message: publicMessage(message) });
+        if (message.sentLang && translator.enabled) { message.translating = new Set([message.sentLang]); }
+        broadcast(room, { type: "message_updated", message: publicMessage(message) });
+        if (message.sentLang) { message.translating?.clear(); translateMessage(room, message, message.sentLang); }
+        return;
       }
       if (msg.type === "delete") {
         const message = store.delete(room, member, msg);
@@ -198,6 +250,16 @@ wss.on("connection", (ws, req) => {
       if (msg.type === "react") {
         const message = store.react(room, member, msg);
         return broadcast(room, { type: "message_updated", message: publicMessage(message) });
+      }
+      if (msg.type === "translate") {
+        if (!translator.enabled) throw new ChatError("invalid", "Translation isn't set up on this server.");
+        if (!isLanguage(msg.to)) throw new ChatError("invalid", "Unknown language.");
+        const message = room.find(msg.id);
+        if (!message.text || !message.lang) throw new ChatError("invalid", "That message can't be translated.");
+        if (message.translations[msg.to] || msg.to === message.lang) return send(ws, { type: "message_updated", message: publicMessage(message) });
+        if (translateTokens <= 0) throw new ChatError("rate_limited", "Too many translations at once. Try again in a moment.");
+        translateTokens -= 1;
+        return translateMessage(room, message, msg.to, ws);
       }
       if (msg.type === "set_background") {
         const background = store.setBackground(room, member, msg);
@@ -226,6 +288,7 @@ wss.on("connection", (ws, req) => {
 
   ws.on("close", () => {
     clearInterval(refill);
+    clearInterval(refillTranslate);
     if (!room) return;
     const left = store.leave(ws, room);
     if (left && store.rooms.has(room.name)) {
@@ -259,7 +322,7 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
 }
 
 server.listen(PORT, () => {
-  console.log(`Flare server on http://localhost:${PORT}${GIPHY_API_KEY ? "" : " (GIF search off: set GIPHY_API_KEY)"}`);
+  console.log(`Flare server on http://localhost:${PORT}${GIPHY_API_KEY ? "" : " (GIF search off: set GIPHY_API_KEY)"}${translator.enabled ? ` (translation: ${translator.provider})` : " (translation off: set ANTHROPIC_API_KEY or DEEPL_API_KEY)"}`);
 });
 
 export { server, store };

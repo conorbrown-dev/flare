@@ -12,7 +12,7 @@ const BASE = `http://localhost:${PORT}`;
 let proc;
 
 before(async () => {
-  proc = spawn(process.execPath, ["server/index.js"], { env: { ...process.env, PORT: String(PORT), GIPHY_API_KEY: "", DATABASE_FILE: path.join(os.tmpdir(), `flare-test-${randomUUID()}.db`) }, stdio: "pipe" });
+  proc = spawn(process.execPath, ["server/index.js"], { env: { ...process.env, PORT: String(PORT), GIPHY_API_KEY: "", TRANSLATOR: "mock", DATABASE_FILE: path.join(os.tmpdir(), `flare-test-${randomUUID()}.db`) }, stdio: "pipe" });
   await new Promise((resolve, reject) => {
     proc.stdout.on("data", (d) => d.toString().includes("Flare server") && resolve());
     proc.on("exit", (c) => reject(new Error(`server exited ${c}`)));
@@ -41,8 +41,12 @@ async function client(clientId = randomUUID()) {
       const i = queue.findIndex(match);
       if (i >= 0) return Promise.resolve(queue.splice(i, 1)[0]);
       return new Promise((resolve, reject) => {
-        waiters.push({ match, resolve });
-        setTimeout(() => reject(new Error(`timed out waiting for ${type}`)), 2000);
+        const waiter = { match, resolve };
+        waiters.push(waiter);
+        setTimeout(() => {
+          const i = waiters.indexOf(waiter);
+          if (i >= 0) { waiters.splice(i, 1); reject(new Error(`timed out waiting for ${type}`)); }
+        }, 2000);
       });
     },
     async join(room, name, password) {
@@ -237,4 +241,62 @@ test("only the room's creator can change the background; everyone is told", asyn
   a.send({ type: "set_background", src: null });
   assert.equal((await b.next("room_updated")).background, null, "back to the default");
   await Promise.all([a, b, c].map((x) => x.close()));
+});
+
+test("messages are translated to the author's chosen language; others can ask for their own", async () => {
+  const name = room();
+  const a = await client(); const b = await client(); const c = await client();
+  await a.join(name, "Ann"); await b.join(name, "Ben"); await c.join(name, "Cat");
+
+  // Ann writes in English and sends as Japanese. The message is posted right away (keeping its
+  // place in the order), then updated once the translation arrives.
+  a.send({ type: "send", kind: "text", text: "good morning", lang: "en", translateTo: "ja" });
+  const posted = (await b.next("message")).message;
+  assert.equal(posted.text, "good morning");
+  assert.equal(posted.lang, "en");
+  assert.equal(posted.sentLang, "ja");
+  assert.deepEqual(posted.translating, ["ja"]);
+  const translated = (await b.next("message_updated")).message;
+  assert.deepEqual(translated.translations, { ja: "[ja] good morning" });
+  assert.equal(translated.translating, undefined);
+  await a.next("message"); await a.next("message_updated"); await c.next("message"); await c.next("message_updated");
+
+  // Ben asks to read it in Spanish: only Ben gets that answer.
+  b.send({ type: "translate", id: posted.id, to: "es" });
+  const forBen = (await b.next("message_updated")).message;
+  assert.equal(forBen.translations.es, "[es] good morning");
+  assert.equal(forBen.translations.ja, "[ja] good morning", "the sent translation is kept");
+  await assert.rejects(c.next("message_updated"), /timed out/, "Cat isn't sent Ben's personal translation");
+
+  // Asking again is answered from the saved copy.
+  c.send({ type: "translate", id: posted.id, to: "es" });
+  assert.equal((await c.next("message_updated")).message.translations.es, "[es] good morning");
+
+  // Editing re-translates into the chosen language and drops stale translations.
+  a.send({ type: "edit", id: posted.id, text: "good evening" });
+  const edited = (await b.next("message_updated")).message;
+  assert.equal(edited.translations, undefined);
+  assert.deepEqual(edited.translating, ["ja"]);
+  assert.deepEqual((await b.next("message_updated")).message.translations, { ja: "[ja] good evening" });
+
+  // A failed translation is reported, and the original still shows.
+  a.send({ type: "send", kind: "text", text: "FAIL_TRANSLATION please", lang: "en", translateTo: "ja" });
+  await b.next("message");
+  const failed = (await b.next("message_updated")).message;
+  assert.equal(failed.translationFailed, true);
+  assert.equal(failed.text, "FAIL_TRANSLATION please");
+
+  // No target, the same language, or an unknown language means no translation.
+  for (const extra of [{}, { translateTo: "en" }, { translateTo: "klingon" }, { lang: "xx", translateTo: "ja" }]) {
+    a.send({ type: "send", kind: "text", text: "plain", lang: "en", ...extra });
+    assert.equal((await b.next("message")).message.sentLang, undefined);
+  }
+  b.send({ type: "translate", id: posted.id, to: "klingon" });
+  assert.equal((await b.next("error")).code, "invalid");
+  await Promise.all([a, b, c].map((x) => x.close()));
+});
+
+test("config reports whether translation is available", async () => {
+  const cfg = await (await fetch(`${BASE}/api/config`)).json();
+  assert.equal(cfg.translation, true);
 });

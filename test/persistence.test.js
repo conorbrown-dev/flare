@@ -15,7 +15,7 @@ const DB_FILE = path.join(os.tmpdir(), `flare-persist-${randomUUID()}.db`);
 
 function startServer() {
   const proc = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "server/index.js"], {
-    env: { ...process.env, PORT: String(PORT), GIPHY_API_KEY: "", DATABASE_FILE: DB_FILE },
+    env: { ...process.env, PORT: String(PORT), GIPHY_API_KEY: "", TRANSLATOR: "mock", DATABASE_FILE: DB_FILE },
     stdio: "pipe",
   });
   return new Promise((resolve, reject) => {
@@ -68,7 +68,9 @@ test("rooms survive a restart", async (t) => {
   const b = await join("keeper", "Ben", ben, "s3cret");
   const send = (c, text) => c.ws.send(JSON.stringify({ type: "send", kind: "text", text }));
   send(a, "first"); send(b, "second"); send(a, "third"); send(a, "to be deleted");
-  const sent = (await waitFor(a.inbox, "message", 4)).map((m) => m.message);
+  a.ws.send(JSON.stringify({ type: "send", kind: "text", text: "konnichiwa test", lang: "en", translateTo: "ja" }));
+  const sent = (await waitFor(a.inbox, "message", 5)).map((m) => m.message).filter((m) => m.text !== "konnichiwa test");
+  await waitFor(a.inbox, "message_updated", 1); // its translation arrived
   const byText = (text) => sent.find((m) => m.text === text).id; // Ann and Ben race, so order may vary
   a.ws.send(JSON.stringify({ type: "edit", id: byText("first"), text: "first (edited)" }));
   b.ws.send(JSON.stringify({ type: "react", id: byText("first"), emoji: "🔥" }));
@@ -76,7 +78,7 @@ test("rooms survive a restart", async (t) => {
   a.ws.send(JSON.stringify({ type: "set_background", src: BG }));
   await waitFor(a.inbox, "room_updated");
   await waitFor(a.inbox, "message_deleted");
-  await waitFor(a.inbox, "message_updated", 2);
+  await waitFor(a.inbox, "message_updated", 3);
   // A second room that gets deleted must stay deleted.
   const c = await join("gone", "Ann", ann);
   c.ws.send(JSON.stringify({ type: "delete_room" }));
@@ -98,6 +100,9 @@ test("rooms survive a restart", async (t) => {
     assert.equal(reply.you.isOwner, true, "creator is still the owner");
     assert.equal(reply.background, BG, "custom background kept");
     assert.equal(reply.you.color, a.reply.you.color, "Ann keeps her color");
+    const tr = reply.messages.find((m) => m.text === "konnichiwa test");
+    assert.deepEqual([tr.lang, tr.sentLang, tr.translations], ["en", "ja", { ja: "[ja] konnichiwa test" }], "translation kept");
+    reply.messages = reply.messages.filter((m) => m !== tr);
     const expected = sent.filter((m) => m.text !== "to be deleted").map((m) => (m.text === "first" ? "first (edited)" : m.text));
     assert.deepEqual(reply.messages.map((m) => m.text), expected, "history in the same order, deletion kept");
     assert.ok(reply.messages[0].editedAt, "edit kept");
@@ -107,7 +112,7 @@ test("rooms survive a restart", async (t) => {
     // New messages continue the sequence instead of restarting at 1.
     send(ann2, "after restart");
     const [next] = await waitFor(ann2.inbox, "message");
-    assert.equal(next.message.seq, 5);
+    assert.equal(next.message.seq, 6);
     ann2.ws.close();
   } finally {
     await stopServer(server);

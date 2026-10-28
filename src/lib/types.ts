@@ -15,6 +15,11 @@ export type Message = {
   createdAt: number;
   editedAt?: number;
   reactions: Reaction[];
+  lang?: string; // language it was written in
+  sentLang?: string; // language the author chose to send it as
+  translations?: Record<string, string>; // lang -> translated text
+  translating?: string[]; // languages the server is translating into right now
+  translationFailed?: boolean; // the author's chosen translation couldn't be made
   pending?: boolean; // sent by us, not yet confirmed by the server
   failed?: string; // why the server refused it
 };
@@ -24,4 +29,4 @@ export type SystemLine = { id: string; afterSeq: number; text: string; at: numbe
 
 export type Me = Member & { isOwner: boolean };
 
-export type Outgoing = { kind: Message["kind"]; text?: string; src?: string };
+export type Outgoing = { kind: Message["kind"]; text?: string; src?: string; lang?: string; translateTo?: string | null };

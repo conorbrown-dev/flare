@@ -29,6 +29,8 @@ To try it on your phone during development, open `http://<your-computer's-LAN-IP
 | `GIPHY_API_KEY` | — | Turns on GIF search. Get a free key at developers.giphy.com. Without it, pasted GIF links still work. |
 | `GIPHY_RATING` | `pg-13` | GIPHY content rating filter (`g`, `pg`, `pg-13`, `r`). |
 | `DATA_DIR` | `./data` | Folder for the database file (`flare.db`). On Railway this is the mounted volume, `/data`. |
+| `ANTHROPIC_API_KEY` | — | Turns on translation using Claude (model `claude-haiku-5-5`, override with `TRANSLATE_MODEL`). |
+| `DEEPL_API_KEY` | — | Turns on translation using DeepL instead (keys ending in `:fx` use the free API). Used only if no Anthropic key is set. |
 | `ROOM_TTL_DAYS` | `0` (never) | If set, rooms with no activity for this many days are deleted. |
 
 ## How each requirement is met
@@ -42,6 +44,7 @@ To try it on your phone during development, open `http://<your-computer's-LAN-IP
 - **Emoji.** Insert emoji in the message box, and react to any message (yours or others') by tapping it. Tap a reaction to add or remove yours.
 - **Edit / delete.** Tap your own message → Edit or Delete. On a keyboard, ↑ in an empty box edits your last message.
 - **Backgrounds.** Every room starts with an animated deep-space scene drawn like a sci-fi comic panel: an inked, posterized nebula with halftone edges and "Kirby crackle", a starburst sun, a cel-shaded ringed gas giant, and a von Neumann-style probe with its drone escort and sensor pings — inspired by the Bobiverse books, all artwork original and generated in code. It runs at up to 30 fps, pauses in background tabs, and holds still for people who prefer reduced motion. The room's creator can upload a custom background image from the ⋮ menu; everyone sees it, and it's saved with the room.
+- **Languages and translation.** In ⋮ → Language, each person sets the language they write and read in (defaults to their browser's) and, optionally, a language to send their messages in. A message sent "in Japanese" is posted immediately in its original form, translated on the server, and then shown to everyone in Japanese, keeping its place in the order. Anyone can tap the 🌐 line under a message to flip to the original, or tap the message to pick the sent version, the original, or their own language. Translations into a reader's language are made on demand and saved with the message. Without a translation key, these options are hidden and messages show as written.
 - **Delete room.** Only the browser that created the room sees "Delete room…" in the ⋮ menu. Everyone in the room is told and sent out.
 
 ## Things to know
@@ -57,6 +60,7 @@ To try it on your phone during development, open `http://<your-computer's-LAN-IP
 server/index.js     HTTP (room lookup, GIF search, static files) + WebSocket handling, rate limits
 server/rooms.js     Room rules: create/join, passwords, ordering, edit, delete, reactions
 server/db.js        Saving rooms and messages to SQLite
+server/translate.js Translation through Claude or DeepL (plus a fake one for tests)
 src/components/SpaceBackground.tsx  The animated space scene (canvas)
 src/lib/useChat.ts  WebSocket connection, reconnecting, message order, unsent-message queue
 src/components/     ChatScreen, MessageItem, Composer, EmojiPicker, GifPicker, Sheet

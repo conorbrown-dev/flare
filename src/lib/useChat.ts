@@ -7,7 +7,7 @@ export type ChatStatus = "connecting" | "open" | "reconnecting" | "join_error" |
 export type ChatEvent =
   | { type: "message"; message: Message }
   | { type: "join" | "leave"; member: Member }
-  | { type: "error"; message: string }
+  | { type: "error"; message: string; request?: string; id?: string }
   | { type: "deleted"; by: string }
   | { type: "background"; by: string; background: string | null };
 
@@ -97,7 +97,7 @@ export function useChat({ room, name, password, onEvent }: Options) {
             for (const id of known) if (id) outbox.current.delete(id);
             setMessages(ordered([...server, ...outbox.current.values()]));
             for (const m of outbox.current.values()) {
-              if (!m.failed) sock.send(JSON.stringify({ type: "send", tempId: m.tempId, kind: m.kind, text: m.text, src: m.src }));
+              if (!m.failed) sock.send(JSON.stringify({ type: "send", tempId: m.tempId, kind: m.kind, text: m.text, src: m.src, lang: m.lang, translateTo: m.sentLang }));
             }
             break;
           }
@@ -148,7 +148,7 @@ export function useChat({ room, name, password, onEvent }: Options) {
               setMessages((list) => ordered(list.map((x) => (x.tempId === msg.tempId && (x.pending || x.failed) ? failed : x))));
               break;
             }
-            onEventRef.current({ type: "error", message: msg.message });
+            onEventRef.current({ type: "error", message: msg.message, request: msg.request, id: msg.id });
             break;
           }
         }
@@ -195,6 +195,8 @@ export function useChat({ room, name, password, onEvent }: Options) {
       id: `temp-${tempId}`, seq: Number.MAX_SAFE_INTEGER, tempId, pending: true,
       authorId: me?.authorId ?? "", name: me?.name ?? name, color: me?.color ?? 0,
       kind: out.kind, text: out.text, src: out.src, createdAt: Date.now(), reactions: [],
+      lang: out.lang,
+      sentLang: out.text && out.translateTo && out.translateTo !== out.lang ? out.translateTo : undefined,
     };
     outbox.current.set(tempId, temp);
     setMessages((list) => ordered([...list, temp]));
@@ -207,7 +209,7 @@ export function useChat({ room, name, password, onEvent }: Options) {
     const again = { ...m, pending: true, failed: undefined };
     outbox.current.set(tempId, again);
     setMessages((list) => ordered(list.map((x) => (x.tempId === tempId && (x.failed || x.pending) ? again : x))));
-    raw({ type: "send", tempId, kind: m.kind, text: m.text, src: m.src });
+    raw({ type: "send", tempId, kind: m.kind, text: m.text, src: m.src, lang: m.lang, translateTo: m.sentLang });
   }, [raw]);
 
   const discardFailed = useCallback((tempId: string) => {
@@ -223,6 +225,7 @@ export function useChat({ room, name, password, onEvent }: Options) {
     edit: (id: string, text: string) => raw({ type: "edit", id, text }) || offline(),
     remove: (id: string) => raw({ type: "delete", id }) || offline(),
     react: (id: string, emoji: string) => raw({ type: "react", id, emoji }) || offline(),
+    translate: (id: string, to: string) => raw({ type: "translate", id, to }) || offline(),
     deleteRoom: () => raw({ type: "delete_room" }) || offline(),
     setBackground: (src: string | null) => raw({ type: "set_background", src }) || offline(),
   };

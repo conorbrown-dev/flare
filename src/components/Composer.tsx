@@ -17,6 +17,8 @@ type Props = {
   onCancelEdit: () => void;
   onEditLast: () => void;
   onError: (message: string) => void;
+  languageNote?: string | null;
+  onOpenLanguage?: () => void;
 };
 
 const Icon = ({ d, label }: { d: string; label: string }) => (
@@ -26,7 +28,7 @@ const Icon = ({ d, label }: { d: string; label: string }) => (
   </svg>
 );
 
-export function Composer({ handle, editing, onSend, onSaveEdit, onCancelEdit, onEditLast, onError }: Props) {
+export function Composer({ handle, editing, onSend, onSaveEdit, onCancelEdit, onEditLast, onError, languageNote, onOpenLanguage }: Props) {
   const [text, setText] = useState("");
   const [image, setImage] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
@@ -109,6 +111,14 @@ export function Composer({ handle, editing, onSend, onSaveEdit, onCancelEdit, on
 
   return (
     <div className="flex-none border-t border-line bg-panel px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+      {languageNote && !editing && (
+        <button className="flex items-center gap-1.5 px-1 pb-1.5 text-[12px] text-dim hover:text-text" onClick={onOpenLanguage}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <circle cx="12" cy="12" r="9.5" /><path d="M2.5 12h19M12 2.5c3 3.2 3 15.8 0 19M12 2.5c-3 3.2-3 15.8 0 19" />
+          </svg>
+          {languageNote}
+        </button>
+      )}
       {editing && (
         <div className="flex items-center gap-2 px-1 pb-2 text-[13px]">
           <span className="text-primary font-semibold">Editing message</span>

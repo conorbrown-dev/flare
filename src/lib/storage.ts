@@ -45,3 +45,9 @@ export const savePassword = (room: string, pw: string | null) => set(session, `c
 
 export const notificationsWanted = () => get(local, "chat.notify") === "1";
 export const setNotificationsWanted = (on: boolean) => set(local, "chat.notify", on ? "1" : "0");
+
+// Language settings: what you write and read in, and what to send your messages as.
+export const savedPrimaryLanguage = () => get(local, "chat.lang");
+export const savePrimaryLanguage = (code: string) => set(local, "chat.lang", code);
+export const savedTranslateTo = () => get(local, "chat.translateTo") || null;
+export const saveTranslateTo = (code: string | null) => set(local, "chat.translateTo", code);

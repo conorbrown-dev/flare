@@ -1,8 +1,11 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { colorFor } from "../lib/colors";
 import { notificationPermission, notify, requestNotifications } from "../lib/notify";
+import { browserLanguage, fullName, isLanguage, LANGUAGES, nativeName } from "../lib/languages";
 import { prepareImage } from "../lib/media";
-import { notificationsWanted, setNotificationsWanted, uid } from "../lib/storage";
+import {
+  notificationsWanted, savedPrimaryLanguage, savedTranslateTo, savePrimaryLanguage, saveTranslateTo, setNotificationsWanted, uid,
+} from "../lib/storage";
 import type { Message } from "../lib/types";
 import { useChat, type ChatEvent } from "../lib/useChat";
 import { Composer, type ComposerHandle } from "./Composer";
@@ -41,11 +44,20 @@ export function ChatScreen({ room, name, password, onJoinError, onDeleted, onBac
   const [unread, setUnread] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
-  const [sheet, setSheet] = useState<null | "members" | "menu" | "delete-room" | "background" | { reactTo: string } | { confirmDelete: Message } | { image: string }>(null);
+  const [sheet, setSheet] = useState<null | "members" | "menu" | "delete-room" | "background" | "language" | { reactTo: string } | { confirmDelete: Message } | { image: string }>(null);
   const [notifyOn, setNotifyOn] = useState(() => notificationsWanted() && notificationPermission() === "granted");
   const [dragging, setDragging] = useState(false);
   const deletedByMe = useRef(false);
   const deletedBy = useRef("");
+
+  // ---- Language settings ----
+  const [myLang, setMyLang] = useState(() => { const l = savedPrimaryLanguage(); return isLanguage(l) ? l : browserLanguage(); });
+  const [translateTo, setTranslateTo] = useState<string | null>(() => { const l = savedTranslateTo(); return isLanguage(l) ? l : null; });
+  const [canTranslate, setCanTranslate] = useState(false);
+  const [chosen, setChosen] = useState<Record<string, string>>({}); // message id -> language picked by this reader
+  useEffect(() => {
+    fetch("/api/config").then((r) => r.json()).then((c) => setCanTranslate(!!c.translation)).catch(() => {});
+  }, []);
 
   const toast = useCallback((text: string, tone?: "error") => {
     const id = uid(6);
@@ -64,6 +76,7 @@ export function ChatScreen({ room, name, password, onJoinError, onDeleted, onBac
     } else if (e.type === "background") {
       toast(e.background ? `${e.by} changed the room background` : `${e.by} switched the room back to the space background`);
     } else if (e.type === "error") {
+      if (e.request === "translate" && e.id) setChosen((c) => { const { [e.id!]: _, ...rest } = c; return rest; });
       toast(e.message, "error");
     } else if (e.type === "deleted") {
       deletedBy.current = e.by;
@@ -128,6 +141,12 @@ export function ChatScreen({ room, name, password, onJoinError, onDeleted, onBac
     }
   }, [messages, system.length]);
 
+  // A reader picks which version of a message to see; fetch the translation if it isn't saved yet.
+  const chooseLang = useCallback((m: Message, lang: string) => {
+    setChosen((c) => ({ ...c, [m.id]: lang }));
+    if (lang !== m.lang && !m.translations?.[lang]) chat.translate(m.id, lang);
+  }, [chat.translate]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ---- Build the visible list: messages in server order, with "X left" lines and day dividers ----
   const rows = useMemo(() => {
     const out: ReactNode[] = [];
@@ -162,13 +181,17 @@ export function ChatScreen({ room, name, password, onJoinError, onDeleted, onBac
             onRetry={chat.retryFailed}
             onDiscard={chat.discardFailed}
             onViewImage={(src) => setSheet({ image: src })}
+            myLang={myLang}
+            chosenLang={chosen[m.id]}
+            canTranslate={canTranslate}
+            onChooseLang={chooseLang}
           />
         </Fragment>,
       );
     }
     while (li < lines.length) { out.push(sys(lines[li].text, lines[li].id)); li++; }
     return out;
-  }, [messages, system, me, selected]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [messages, system, me, selected, myLang, chosen, canTranslate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- Paste/drop an image anywhere on the page ----
   const composer = useRef<ComposerHandle | null>(null);
@@ -308,7 +331,9 @@ export function ChatScreen({ room, name, password, onJoinError, onDeleted, onBac
       <Composer
         handle={composer}
         editing={editing}
-        onSend={(out) => { atBottom.current = true; chat.send(out); }}
+        onSend={(out) => { atBottom.current = true; chat.send({ ...out, lang: myLang, translateTo: canTranslate ? translateTo : null }); }}
+        languageNote={canTranslate && translateTo && translateTo !== myLang ? `Writing in ${nativeName(myLang)} · sending in ${nativeName(translateTo)}` : null}
+        onOpenLanguage={() => setSheet("language")}
         onSaveEdit={chat.edit}
         onCancelEdit={() => setEditing(null)}
         onEditLast={editLast}
@@ -340,6 +365,9 @@ export function ChatScreen({ room, name, password, onJoinError, onDeleted, onBac
         <Sheet title={`#${room}`} onClose={() => setSheet(null)}>
           <div className="flex flex-col gap-2">
             <button className="btn text-left !py-3" onClick={shareLink}>Share room link</button>
+            <button className="btn text-left !py-3" onClick={() => setSheet("language")}>
+              Language… <span className="text-dim text-[12px] ml-1">{nativeName(myLang)}{translateTo && canTranslate ? ` → ${nativeName(translateTo)}` : ""}</span>
+            </button>
             {me?.isOwner && (
               <button className="btn text-left !py-3" onClick={() => setSheet("background")}>Change background…</button>
             )}
@@ -352,6 +380,41 @@ export function ChatScreen({ room, name, password, onJoinError, onDeleted, onBac
             )}
           </div>
           {me?.isOwner && <p className="text-[12px] text-dim mt-3">You started this room, so you can change its background or delete it.</p>}
+        </Sheet>
+      )}
+
+      {sheet === "language" && (
+        <Sheet title="Language" onClose={() => setSheet(null)}>
+          <div className="form !overflow-visible gap-4">
+            <label className="field">
+              <span className="field-label">I write and read in</span>
+              <select
+                className="input !text-base !py-2.5"
+                value={myLang}
+                onChange={(e) => { setMyLang(e.target.value); savePrimaryLanguage(e.target.value); setChosen({}); }}
+              >
+                {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{fullName(l.code)}</option>)}
+              </select>
+              <span className="field-msg">Messages in other languages can be shown in this language with one tap.</span>
+            </label>
+            <label className="field">
+              <span className="field-label">Send my messages in</span>
+              <select
+                className="input !text-base !py-2.5"
+                value={translateTo ?? ""}
+                disabled={!canTranslate}
+                onChange={(e) => { const v = e.target.value || null; setTranslateTo(v); saveTranslateTo(v); }}
+              >
+                <option value="">{nativeName(myLang)} (don't translate)</option>
+                {LANGUAGES.filter((l) => l.code !== myLang).map((l) => <option key={l.code} value={l.code}>{fullName(l.code)}</option>)}
+              </select>
+              <span className="field-msg">
+                {canTranslate
+                  ? "You keep writing in your language; everyone sees it in this one. They can tap to see your original."
+                  : "Translation isn't set up on this server yet."}
+              </span>
+            </label>
+          </div>
         </Sheet>
       )}
 
