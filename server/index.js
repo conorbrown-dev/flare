@@ -4,14 +4,19 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { RoomStore, ChatError, publicMessage } from "./rooms.js";
+import { Db } from "./db.js";
 
 const PORT = Number(process.env.PORT ?? 3001);
 const GIPHY_API_KEY = process.env.GIPHY_API_KEY ?? "";
 const GIPHY_RATING = process.env.GIPHY_RATING ?? "pg-13";
-const ROOM_TTL_MS = Number(process.env.ROOM_TTL_HOURS ?? 24) * 3_600_000;
+// Rooms are kept forever unless ROOM_TTL_DAYS is set (then deleted after that many idle days).
+const ROOM_TTL_MS = Number(process.env.ROOM_TTL_DAYS ?? 0) * 86_400_000;
+// Where the database file lives. On Railway this is the mounted volume.
+const DATA_DIR = process.env.DATA_DIR ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../data");
 const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../dist");
 
-const store = new RoomStore();
+const db = new Db(process.env.DATABASE_FILE ?? path.join(DATA_DIR, "flare.db"));
+const store = new RoomStore(db);
 
 // ---------- HTTP: room lookup, GIF search, built client ----------
 
@@ -234,9 +239,19 @@ setInterval(() => {
 }, 30_000).unref();
 
 setInterval(() => {
-  store.sweep(ROOM_TTL_MS);
+  store.sweep({ idleMs: 30 * 60_000, ttlMs: ROOM_TTL_MS });
   for (const [k, a] of attempts) if (a.until < Date.now() && a.count === 0) attempts.delete(k);
 }, 10 * 60_000).unref();
+
+// Close the database cleanly when Railway stops the old container during a deploy.
+for (const signal of ["SIGTERM", "SIGINT"]) {
+  process.on(signal, () => {
+    for (const ws of wss.clients) ws.close(1012, "server restarting");
+    server.close();
+    db.close();
+    process.exit(0);
+  });
+}
 
 server.listen(PORT, () => {
   console.log(`Flare server on http://localhost:${PORT}${GIPHY_API_KEY ? "" : " (GIF search off: set GIPHY_API_KEY)"}`);

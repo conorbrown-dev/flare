@@ -4,6 +4,8 @@ Mobile-first chat rooms in the browser. Node + WebSockets on the server, Vite + 
 
 ## Run it
 
+Requires Node 22.13 or newer.
+
 ```bash
 npm install
 npm run dev          # server on :3001, Vite on :5173 (open http://localhost:5173/any-room)
@@ -26,7 +28,8 @@ To try it on your phone during development, open `http://<your-computer's-LAN-IP
 | `PORT` | `3001` | Port for the server (and the Vite dev proxy target). |
 | `GIPHY_API_KEY` | — | Turns on GIF search. Get a free key at developers.giphy.com. Without it, pasted GIF links still work. |
 | `GIPHY_RATING` | `pg-13` | GIPHY content rating filter (`g`, `pg`, `pg-13`, `r`). |
-| `ROOM_TTL_HOURS` | `24` | Empty rooms are forgotten after this many hours of no activity. |
+| `DATA_DIR` | `./data` | Folder for the database file (`flare.db`). On Railway this is the mounted volume, `/data`. |
+| `ROOM_TTL_DAYS` | `0` (never) | If set, rooms with no activity for this many days are deleted. |
 
 ## How each requirement is met
 
@@ -42,7 +45,7 @@ To try it on your phone during development, open `http://<your-computer's-LAN-IP
 
 ## Things to know
 
-- **Everything is in memory.** Restarting the server clears all rooms and messages. Each room keeps its latest 500 messages (and at most ~60 MB of images). Swap `RoomStore` in `server/rooms.js` for a database if you need persistence.
+- **Rooms persist.** Rooms, messages, edits, reactions, passwords, owners and colors are saved to a SQLite database (Node's built-in `node:sqlite`, so nothing extra to install) and survive restarts and deploys. Rooms in use are kept in memory; others load from disk when someone visits. Each room keeps its latest 500 messages (and at most ~60 MB of images). Because the database is one file on one disk, run a single server instance.
 - **Identity is per browser, not per account.** A random secret ID in `localStorage` decides which messages are yours and who owns a room. Clearing site data or switching browsers means you can't edit old messages or delete a room you created.
 - **Notifications need HTTPS** (or `localhost`). On iPhone, Safari only allows them after "Add to Home Screen" (iOS 16.4+); the app includes a manifest so that works. Android Chrome uses the included service worker (`public/sw.js`).
 - **Deploying behind a proxy:** make sure it forwards WebSocket upgrades on `/ws` (nginx needs `proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade";`).
@@ -52,8 +55,9 @@ To try it on your phone during development, open `http://<your-computer's-LAN-IP
 ```
 server/index.js     HTTP (room lookup, GIF search, static files) + WebSocket handling, rate limits
 server/rooms.js     Room rules: create/join, passwords, ordering, edit, delete, reactions
+server/db.js        Saving rooms and messages to SQLite
 src/lib/useChat.ts  WebSocket connection, reconnecting, message order, unsent-message queue
 src/components/     ChatScreen, MessageItem, Composer, EmojiPicker, GifPicker, Sheet
 src/theme.css       Brackman theme with orange primary
-test/               Server tests
+test/               Server tests, including a restart test that checks rooms come back
 ```

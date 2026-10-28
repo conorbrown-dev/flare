@@ -4,13 +4,15 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
+import os from "node:os";
+import path from "node:path";
 
 const PORT = 3999;
 const BASE = `http://localhost:${PORT}`;
 let proc;
 
 before(async () => {
-  proc = spawn(process.execPath, ["server/index.js"], { env: { ...process.env, PORT: String(PORT), GIPHY_API_KEY: "" }, stdio: "pipe" });
+  proc = spawn(process.execPath, ["server/index.js"], { env: { ...process.env, PORT: String(PORT), GIPHY_API_KEY: "", DATABASE_FILE: path.join(os.tmpdir(), `flare-test-${randomUUID()}.db`) }, stdio: "pipe" });
   await new Promise((resolve, reject) => {
     proc.stdout.on("data", (d) => d.toString().includes("Flare server") && resolve());
     proc.on("exit", (c) => reject(new Error(`server exited ${c}`)));

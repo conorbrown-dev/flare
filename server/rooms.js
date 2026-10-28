@@ -1,4 +1,5 @@
-// Room state and rules. Everything lives in memory: a restart clears all rooms.
+// Room state and rules. Rooms in use are kept in memory for speed; every change
+// is also written to the database (server/db.js) so rooms survive restarts.
 import crypto from "node:crypto";
 
 export const LIMITS = {
@@ -69,17 +70,18 @@ export class ChatError extends Error {
 }
 
 class Room {
-  constructor(name, ownerId, password) {
+  /** `saved` is a room loaded from the database; without it this is a brand-new room. */
+  constructor(name, ownerId, password, saved = null) {
     this.name = name;
-    this.ownerId = ownerId;
-    this.password = password ? hashPassword(password) : null;
-    this.createdAt = Date.now();
-    this.lastActivity = Date.now();
-    this.seq = 0; // increases by one per message; defines the one true order
-    this.messages = [];
-    this.imageBytes = 0;
+    this.ownerId = saved?.ownerId ?? ownerId;
+    this.password = saved ? saved.password : password ? hashPassword(password) : null;
+    this.createdAt = saved?.createdAt ?? Date.now();
+    this.lastActivity = saved?.lastActivity ?? Date.now();
+    this.seq = saved?.seq ?? 0; // increases by one per message; defines the one true order
+    this.messages = saved?.messages ?? [];
+    this.imageBytes = this.messages.reduce((n, m) => n + (m.kind === "image" ? m.src.length : 0), 0);
     this.connections = new Map(); // connection -> member
-    this.colorByAuthor = new Map(); // keeps someone's color if they rejoin
+    this.colorByAuthor = saved?.colors ?? new Map(); // keeps someone's color if they rejoin
   }
 
   get hasPassword() { return this.password !== null; }
@@ -95,13 +97,14 @@ class Room {
     return false;
   }
 
+  /** Returns [color, isNew]. Someone keeps the same color whenever they come back. */
   pickColor(authorId) {
-    if (this.colorByAuthor.has(authorId)) return this.colorByAuthor.get(authorId);
+    if (this.colorByAuthor.has(authorId)) return [this.colorByAuthor.get(authorId), false];
     const used = new Array(LIMITS.colors).fill(0);
     for (const m of this.members()) used[m.color]++;
     const color = used.indexOf(Math.min(...used));
     this.colorByAuthor.set(authorId, color);
-    return color;
+    return [color, true];
   }
 
   find(id) {
@@ -110,15 +113,18 @@ class Room {
     return msg;
   }
 
+  /** Adds a message; returns any old messages trimmed to stay within the history limits. */
   add(message) {
     message.seq = ++this.seq;
     this.messages.push(message);
     this.imageBytes += message.kind === "image" ? message.src.length : 0;
-    // Trim oldest messages when history or stored image size gets too big.
+    const trimmed = [];
     while (this.messages.length > LIMITS.history || this.imageBytes > LIMITS.roomImageBytes) {
+      trimmed.push(this.messages[0]);
       this.remove(this.messages[0]);
     }
     this.lastActivity = Date.now();
+    return trimmed;
   }
 
   remove(message) {
@@ -154,14 +160,29 @@ export function publicMessage(msg) {
 }
 
 export class RoomStore {
-  constructor() {
-    this.rooms = new Map();
+  /** `db` (optional) saves everything to disk; without it rooms live only in memory. */
+  constructor(db = null) {
+    this.db = db;
+    this.rooms = new Map(); // rooms currently in memory; others are loaded from disk on demand
+  }
+
+  /** The room, from memory or loaded from disk, or undefined if it doesn't exist. */
+  get(name) {
+    let room = this.rooms.get(name);
+    if (!room && this.db) {
+      const saved = this.db.loadRoom(name);
+      if (saved) {
+        room = new Room(name, null, null, saved);
+        this.rooms.set(name, room);
+      }
+    }
+    return room;
   }
 
   info(rawName) {
     const name = normalizeRoomName(rawName);
     if (!name) return null;
-    const room = this.rooms.get(name);
+    const room = this.get(name);
     return { name, exists: !!room, hasPassword: room?.hasPassword ?? false };
   }
 
@@ -179,10 +200,11 @@ export class RoomStore {
     if (password != null && (typeof password !== "string" || password.length > LIMITS.password)) throw new ChatError("invalid", "Password is too long.");
 
     const authorId = authorIdFor(clientId);
-    let room = this.rooms.get(roomName);
+    let room = this.get(roomName);
     let created = false;
     if (!room) {
       room = new Room(roomName, authorId, password || null);
+      this.db?.createRoom(room);
       this.rooms.set(roomName, room);
       created = true;
     } else if (room.hasPassword) {
@@ -190,16 +212,18 @@ export class RoomStore {
       if (!checkPassword(password, room.password)) throw new ChatError("bad_password", "Wrong password.");
     }
 
+    // (A brand-new room has nobody in it yet, so this only applies to existing rooms.)
     const lower = name.toLowerCase();
     for (const m of room.connections.values()) {
       if (m.authorId !== authorId && m.name.toLowerCase() === lower) {
-        if (created) this.rooms.delete(roomName);
         throw new ChatError("name_taken", `Someone here is already called ${m.name}.`);
       }
     }
 
     const wasConnected = room.isConnected(authorId);
-    const member = { authorId, name, color: room.pickColor(authorId) };
+    const [color, newColor] = room.pickColor(authorId);
+    if (newColor) this.db?.saveColors(room);
+    const member = { authorId, name, color };
     room.connections.set(conn, member);
     room.lastActivity = Date.now();
     return { room, member, created, firstConnection: !wasConnected };
@@ -241,7 +265,8 @@ export class RoomStore {
       editedAt: undefined,
       reactions: new Map(), // emoji -> Map(authorId -> name)
     };
-    room.add(message);
+    const trimmed = room.add(message);
+    this.db?.addMessage(room, message, trimmed);
     return message;
   }
 
@@ -254,6 +279,7 @@ export class RoomStore {
     msg.text = text || undefined;
     msg.editedAt = Date.now();
     room.lastActivity = Date.now();
+    this.db?.updateMessage(room, msg);
     return msg;
   }
 
@@ -262,6 +288,7 @@ export class RoomStore {
     if (msg.authorId !== member.authorId) throw new ChatError("forbidden", "You can only delete your own messages.");
     room.remove(msg);
     room.lastActivity = Date.now();
+    this.db?.deleteMessage(room, msg);
     return msg;
   }
 
@@ -280,19 +307,38 @@ export class RoomStore {
       }
       users.set(member.authorId, member.name);
     }
+    this.db?.updateMessage(room, msg);
     return msg;
   }
 
   deleteRoom(room, member) {
     if (room.ownerId !== member.authorId) throw new ChatError("forbidden", "Only the person who started the room can delete it.");
     this.rooms.delete(room.name);
+    this.db?.deleteRoom(room.name);
   }
 
-  /** Forget rooms nobody has been in for `ttlMs`. */
-  sweep(ttlMs) {
-    const cutoff = Date.now() - ttlMs;
+  /**
+   * Housekeeping. Empty rooms are dropped from memory after `idleMs` (they stay
+   * on disk and reload when someone visits). Rooms with no activity for `ttlMs`
+   * are deleted for good; a ttlMs of 0 keeps rooms forever.
+   */
+  sweep({ idleMs, ttlMs }) {
+    const now = Date.now();
     for (const [name, room] of this.rooms) {
-      if (room.connections.size === 0 && room.lastActivity < cutoff) this.rooms.delete(name);
+      if (room.connections.size > 0) continue;
+      const idle = now - room.lastActivity;
+      if (ttlMs > 0 && idle > ttlMs) {
+        this.rooms.delete(name);
+        this.db?.deleteRoom(name);
+      } else if (this.db && idle > idleMs) {
+        this.db.touchRoom(room); // remember when it was last used
+        this.rooms.delete(name); // still saved on disk
+      }
+    }
+    if (ttlMs > 0 && this.db) {
+      for (const name of this.db.staleRoomNames(now - ttlMs)) {
+        if (!this.rooms.has(name)) this.db.deleteRoom(name);
+      }
     }
   }
 }

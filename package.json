@@ -5,13 +5,13 @@
   "type": "module",
   "description": "Flare: mobile-first browser chat rooms. Node + WebSockets server, Vite/React/Tailwind client.",
   "scripts": {
-    "dev": "concurrently -k -n server,client -c yellow,cyan \"node --watch server/index.js\" \"vite\"",
+    "dev": "concurrently -k -n server,client -c yellow,cyan \"node --watch --disable-warning=ExperimentalWarning server/index.js\" \"vite\"",
     "build": "vite build",
-    "start": "node server/index.js",
+    "start": "node --disable-warning=ExperimentalWarning server/index.js",
     "test": "node --test"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13"
   },
   "dependencies": {
     "ws": "^8.18.0"
