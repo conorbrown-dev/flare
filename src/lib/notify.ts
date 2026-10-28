@@ -26,13 +26,30 @@ export async function requestNotifications(): Promise<boolean> {
 export async function notify(title: string, body: string, tag?: string) {
   if (!notificationsWanted() || notificationPermission() !== "granted") return;
   if (document.visibilityState === "visible" && document.hasFocus()) return;
-  const options: NotificationOptions = { body, tag, icon: "/icon.svg", badge: "/icon.svg", data: { url: location.href } };
+  await show(title, body, tag);
+}
+
+/** Shows a notification right away (used by "Send a test notification"). Returns false if the browser refused. */
+export async function notifyNow(title: string, body: string) {
+  if (notificationPermission() !== "granted") return false;
+  return show(title, body, `test-${Date.now()}`);
+}
+
+async function show(title: string, body: string, tag?: string): Promise<boolean> {
+  // One notification per room (the tag) that updates in place, but re-alerts for each
+  // new message. Without renotify, Chrome silently swaps the text and nobody notices.
+  const options: NotificationOptions & { renotify?: boolean } = {
+    body, tag, renotify: !!tag, icon: "/icon.svg", badge: "/icon.svg", data: { url: location.href },
+  };
   try {
     const reg = await navigator.serviceWorker?.getRegistration();
-    if (reg) return void (await reg.showNotification(title, options));
+    if (reg) { await reg.showNotification(title, options); return true; }
   } catch { /* fall through */ }
   try {
     const n = new Notification(title, options);
     n.onclick = () => { window.focus(); n.close(); };
-  } catch { /* this browser refuses page notifications */ }
+    return true;
+  } catch {
+    return false; // this browser refuses page notifications
+  }
 }

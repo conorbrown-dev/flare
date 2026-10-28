@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { colorFor } from "../lib/colors";
-import { notificationPermission, notify, requestNotifications } from "../lib/notify";
+import { notificationPermission, notify, notifyNow, requestNotifications } from "../lib/notify";
 import { browserLanguage, fullName, isLanguage, LANGUAGES, nativeName } from "../lib/languages";
 import { prepareImage } from "../lib/media";
 import {
@@ -46,6 +46,12 @@ export function ChatScreen({ room, name, password, onJoinError, onDeleted, onBac
   const [editing, setEditing] = useState<Message | null>(null);
   const [sheet, setSheet] = useState<null | "members" | "menu" | "delete-room" | "background" | "language" | { reactTo: string } | { confirmDelete: Message } | { image: string }>(null);
   const [notifyOn, setNotifyOn] = useState(() => notificationsWanted() && notificationPermission() === "granted");
+  // Offer notifications once, in the chat, to people who haven't decided yet.
+  const [offerNotify, setOfferNotify] = useState(() => {
+    try { if (localStorage.getItem("chat.notifyOffered")) return false; } catch { /* ignore */ }
+    return !notifyOn && notificationPermission() === "default";
+  });
+  const dismissOffer = () => { setOfferNotify(false); try { localStorage.setItem("chat.notifyOffered", "1"); } catch { /* ignore */ } };
   const [dragging, setDragging] = useState(false);
   const deletedByMe = useRef(false);
   const deletedBy = useRef("");
@@ -221,11 +227,20 @@ export function ChatScreen({ room, name, password, onJoinError, onDeleted, onBac
     }
     if (permission === "denied") return toast("Notifications are blocked for this site. Allow them in your browser's site settings.", "error");
     if (await requestNotifications()) {
-      setNotificationsWanted(true); setNotifyOn(true);
-      toast("Notifications on. You'll be alerted about new messages and people leaving while this tab is in the background.");
+      setNotificationsWanted(true); setNotifyOn(true); dismissOffer();
+      toast("Notifications on. You'll get them for new messages and people leaving whenever you're not looking at this chat.");
     } else {
       toast("Notifications weren't allowed.", "error");
     }
+  }
+
+  async function testNotification() {
+    setSheet(null);
+    if (notificationPermission() !== "granted") return toggleNotifications();
+    const shown = await notifyNow("Flare test", `Notifications from #${room} are working.`);
+    toast(shown
+      ? "Test sent. If no pop-up appeared, your computer is hiding Chrome's notifications: check Notifications in your system settings and any Do Not Disturb or Focus mode."
+      : "Chrome refused to show a notification. Check this site's notification setting in Chrome.", shown ? undefined : "error");
   }
 
   async function shareLink() {
@@ -280,6 +295,14 @@ export function ChatScreen({ room, name, password, onJoinError, onDeleted, onBac
           <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="12" cy="19" r="1.8" /></svg>
         </button>
       </header>
+
+      {offerNotify && status === "open" && (
+        <div className="flex-none flex items-center gap-2 px-3 py-2 text-[13px] bg-panel/90 border-b border-line" role="region" aria-label="Notifications">
+          <span className="flex-1">Get notified about new messages when you're not looking?</span>
+          <button className="btn primary !py-1 !px-3 !min-h-0" onClick={() => { dismissOffer(); toggleNotifications(); }}>Turn on</button>
+          <button className="chip" onClick={dismissOffer}>Not now</button>
+        </div>
+      )}
 
       {status === "reconnecting" && (
         <div className="flex-none px-3 py-1.5 text-[12px] bg-panel-2 border-b border-primary-dim text-text" role="status">
@@ -374,6 +397,9 @@ export function ChatScreen({ room, name, password, onJoinError, onDeleted, onBac
             <button className="btn text-left !py-3" onClick={() => { setSheet(null); toggleNotifications(); }}>
               {notifyOn ? "Turn notifications off" : "Turn notifications on"}
             </button>
+            {notifyOn && (
+              <button className="btn text-left !py-3" onClick={testNotification}>Send a test notification</button>
+            )}
             <a className="btn text-left !py-3 no-underline" href="/">Leave room</a>
             {me?.isOwner && (
               <button className="btn text-left !py-3 !text-primary !border-primary-dim" onClick={() => setSheet("delete-room")}>Delete room…</button>
