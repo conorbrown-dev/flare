@@ -41,7 +41,7 @@ To try it on your phone during development, open `http://<your-computer's-LAN-IP
 - **`Name:` in a rainbow color.** Each person gets one of red, orange, yellow, green, blue, indigo, violet — the least-used one in the room — and keeps it if they rejoin.
 - **Emoji.** Insert emoji in the message box, and react to any message (yours or others') by tapping it. Tap a reaction to add or remove yours.
 - **Edit / delete.** Tap your own message → Edit or Delete. On a keyboard, ↑ in an empty box edits your last message.
-- **Backgrounds.** Every room starts with an animated deep-space scene (a drifting star field, a ringed gas giant, and a small von Neumann-style probe with its drone escort — inspired by the Bobiverse books, all artwork original). It runs at up to 30 fps, pauses in background tabs, and holds still for people who prefer reduced motion. The room's creator can upload a custom background image from the ⋮ menu; everyone sees it, and it's saved with the room.
+- **Backgrounds.** Every room starts with an animated deep-space scene drawn like a sci-fi comic panel: an inked, posterized nebula with halftone edges and "Kirby crackle", a starburst sun, a cel-shaded ringed gas giant, and a von Neumann-style probe with its drone escort and sensor pings — inspired by the Bobiverse books, all artwork original and generated in code. It runs at up to 30 fps, pauses in background tabs, and holds still for people who prefer reduced motion. The room's creator can upload a custom background image from the ⋮ menu; everyone sees it, and it's saved with the room.
 - **Delete room.** Only the browser that created the room sees "Delete room…" in the ⋮ menu. Everyone in the room is told and sent out.
 
 ## Things to know

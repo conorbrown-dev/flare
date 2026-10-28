@@ -17,7 +17,7 @@ type Phase =
 function Frame({ children }: { children: ReactNode }) {
   return (
     <main className="min-h-dvh grid place-items-center p-4 pt-[max(1rem,env(safe-area-inset-top))]">
-      <div className="w-full max-w-sm bg-panel/85 border border-line p-5 flex flex-col gap-4 shadow-2xl">{children}</div>
+      <div className="w-full max-w-sm bg-panel/92 border border-line p-5 flex flex-col gap-4 shadow-2xl">{children}</div>
     </main>
   );
 }
