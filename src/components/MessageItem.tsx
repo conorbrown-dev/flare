@@ -1,0 +1,136 @@
+import { memo, type ReactNode } from "react";
+import { colorFor } from "../lib/colors";
+import { isJumboEmoji } from "../lib/media";
+import type { Me, Message } from "../lib/types";
+import { QUICK_REACTIONS } from "./EmojiPicker";
+
+const URL_RE = /(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"])/g;
+
+/** Plain text with web links made clickable. Never renders HTML from the message. */
+function Linkified({ text }: { text: string }) {
+  const parts: ReactNode[] = [];
+  let last = 0;
+  for (const m of text.matchAll(URL_RE)) {
+    if (m.index! > last) parts.push(text.slice(last, m.index));
+    parts.push(
+      <a key={m.index} href={m[0]} target="_blank" rel="noopener noreferrer nofollow" className="text-primary underline underline-offset-2 break-all">
+        {m[0]}
+      </a>,
+    );
+    last = m.index! + m[0].length;
+  }
+  parts.push(text.slice(last));
+  return <>{parts}</>;
+}
+
+const time = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+type Props = {
+  message: Message;
+  me: Me | null;
+  selected: boolean;
+  onSelect: (id: string | null) => void;
+  onReact: (id: string, emoji: string) => void;
+  onMoreReactions: (id: string) => void;
+  onEdit: (m: Message) => void;
+  onDelete: (m: Message) => void;
+  onRetry: (tempId: string) => void;
+  onDiscard: (tempId: string) => void;
+  onViewImage: (src: string) => void;
+};
+
+export const MessageItem = memo(function MessageItem({
+  message: m, me, selected, onSelect, onReact, onMoreReactions, onEdit, onDelete, onRetry, onDiscard, onViewImage,
+}: Props) {
+  const mine = !!me && m.authorId === me.authorId;
+  const color = colorFor(m.color);
+  const confirmed = !m.pending && !m.failed;
+  const jumbo = m.kind === "text" && isJumboEmoji(m.text);
+
+  return (
+    <li
+      className={`msg relative px-3 py-1.5 border-l-[3px] ${selected ? "bg-panel-2" : "hover:bg-panel/70"} ${m.pending ? "opacity-60" : ""}`}
+      style={{ borderLeftColor: color }}
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest("a,button,img")) return;
+        if (confirmed) onSelect(selected ? null : m.id);
+      }}
+      data-seq={m.seq}
+    >
+      <div className="flex items-baseline gap-2">
+        <div className="flex-1 min-w-0 break-words whitespace-pre-wrap leading-snug text-[15px]">
+          <span className="font-semibold mr-1.5" style={{ color }}>
+            {m.name}:
+          </span>
+          {m.kind === "text" && m.text && (jumbo ? <span className="text-4xl leading-tight align-middle">{m.text}</span> : <Linkified text={m.text} />)}
+          {m.kind !== "text" && m.text && <Linkified text={m.text} />}
+        </div>
+        <span className="flex-none text-[11px] text-dim tabular-nums" title={new Date(m.createdAt).toLocaleString()}>
+          {m.pending ? "sending…" : time(m.createdAt)}
+          {m.editedAt && <span title={`Edited ${new Date(m.editedAt).toLocaleString()}`}> · edited</span>}
+        </span>
+      </div>
+
+      {(m.kind === "image" || m.kind === "gif") && m.src && (
+        <img
+          src={m.src}
+          alt={m.kind === "gif" ? "GIF" : `Image from ${m.name}`}
+          loading="lazy"
+          className="mt-1.5 max-h-72 max-w-[min(100%,420px)] w-auto object-contain bg-panel border border-line cursor-zoom-in"
+          onClick={() => onViewImage(m.src!)}
+        />
+      )}
+
+      {m.failed && (
+        <div className="mt-1 flex flex-wrap items-center gap-2 text-sm">
+          <span className="error">Not sent: {m.failed}</span>
+          <button className="chip" onClick={() => onRetry(m.tempId!)}>Retry</button>
+          <button className="chip" onClick={() => onDiscard(m.tempId!)}>Discard</button>
+        </div>
+      )}
+
+      {m.reactions.length > 0 && (
+        <div className="mt-1 flex flex-wrap gap-1">
+          {m.reactions.map((r) => {
+            const reacted = !!me && r.users.some((u) => u.authorId === me.authorId);
+            return (
+              <button
+                key={r.emoji}
+                className={`chip !px-2 !py-0.5 !text-[13px] ${reacted ? "on" : ""}`}
+                onClick={() => onReact(m.id, r.emoji)}
+                title={r.users.map((u) => u.name).join(", ")}
+                aria-label={`${r.emoji} ${r.users.length}, from ${r.users.map((u) => u.name).join(", ")}${reacted ? ". Tap to remove yours" : ""}`}
+                aria-pressed={reacted}
+              >
+                {r.emoji} <span className="tabular-nums">{r.users.length}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {selected && confirmed && (
+        <div className="mt-2 flex flex-wrap items-center gap-1" role="toolbar" aria-label="Message actions">
+          {QUICK_REACTIONS.map((e) => (
+            <button key={e} className="chip !text-lg !px-2 !py-0.5" onClick={() => { onReact(m.id, e); onSelect(null); }} aria-label={`React ${e}`}>
+              {e}
+            </button>
+          ))}
+          <button className="chip !px-2.5 !py-1" onClick={() => onMoreReactions(m.id)} aria-label="More reactions">
+            ＋😊
+          </button>
+          <span className="flex-1" />
+          {m.kind === "text" && m.text && (
+            <button className="chip !py-1" onClick={() => { navigator.clipboard?.writeText(m.text!); onSelect(null); }}>Copy</button>
+          )}
+          {mine && (
+            <>
+              <button className="chip !py-1" onClick={() => onEdit(m)}>Edit</button>
+              <button className="chip !py-1 hover:!text-primary" onClick={() => onDelete(m)}>Delete</button>
+            </>
+          )}
+        </div>
+      )}
+    </li>
+  );
+});

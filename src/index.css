@@ -1,0 +1,42 @@
+@import "tailwindcss";
+
+/* Brackman's theme (primary switched to orange). It sits in the components
+   layer so Tailwind utility classes can still adjust spacing and layout. */
+@import "./theme.css" layer(components);
+
+/* Expose the theme's variables as Tailwind colors: bg-panel, text-dim, border-primary, ... */
+@theme inline {
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-dim: var(--primary-dim);
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-line: var(--line);
+  --color-text: var(--text);
+  --color-dim: var(--text-dim);
+  --color-focus: var(--focus);
+}
+
+@layer base {
+  html { -webkit-text-size-adjust: 100%; }
+  body { overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
+  a { color: inherit; }
+  button { touch-action: manipulation; }
+}
+
+@layer components {
+  /* Theme buttons are a little small for thumbs; give them a 40px tap area on touch screens. */
+  @media (pointer: coarse) {
+    .btn { min-height: 40px; }
+    .chip { min-height: 32px; }
+  }
+}
+
+@keyframes sheet-in { from { transform: translateY(16px); opacity: 0; } }
+@keyframes toast-in { from { transform: translateY(-6px); opacity: 0; } }
+.sheet-in { animation: sheet-in 0.16s ease-out; }
+.toast-in { animation: toast-in 0.15s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .sheet-in, .toast-in { animation: none; }
+}
