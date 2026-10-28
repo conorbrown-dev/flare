@@ -41,6 +41,7 @@ To try it on your phone during development, open `http://<your-computer's-LAN-IP
 - **`Name:` in a rainbow color.** Each person gets one of red, orange, yellow, green, blue, indigo, violet — the least-used one in the room — and keeps it if they rejoin.
 - **Emoji.** Insert emoji in the message box, and react to any message (yours or others') by tapping it. Tap a reaction to add or remove yours.
 - **Edit / delete.** Tap your own message → Edit or Delete. On a keyboard, ↑ in an empty box edits your last message.
+- **Backgrounds.** Every room starts with an animated deep-space scene (a drifting star field, a ringed gas giant, and a small von Neumann-style probe with its drone escort — inspired by the Bobiverse books, all artwork original). It runs at up to 30 fps, pauses in background tabs, and holds still for people who prefer reduced motion. The room's creator can upload a custom background image from the ⋮ menu; everyone sees it, and it's saved with the room.
 - **Delete room.** Only the browser that created the room sees "Delete room…" in the ⋮ menu. Everyone in the room is told and sent out.
 
 ## Things to know
@@ -56,6 +57,7 @@ To try it on your phone during development, open `http://<your-computer's-LAN-IP
 server/index.js     HTTP (room lookup, GIF search, static files) + WebSocket handling, rate limits
 server/rooms.js     Room rules: create/join, passwords, ordering, edit, delete, reactions
 server/db.js        Saving rooms and messages to SQLite
+src/components/SpaceBackground.tsx  The animated space scene (canvas)
 src/lib/useChat.ts  WebSocket connection, reconnecting, message order, unsent-message queue
 src/components/     ChatScreen, MessageItem, Composer, EmojiPicker, GifPicker, Sheet
 src/theme.css       Brackman theme with orange primary

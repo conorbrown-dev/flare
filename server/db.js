@@ -47,12 +47,16 @@ export class Db {
     if (file !== ":memory:") fs.mkdirSync(path.dirname(file), { recursive: true });
     this.db = new DatabaseSync(file);
     this.db.exec(SCHEMA);
+    // Columns added after the first release; existing databases get them on startup.
+    const columns = new Set(this.db.prepare("PRAGMA table_info(rooms)").all().map((c) => c.name));
+    if (!columns.has("background")) this.db.exec("ALTER TABLE rooms ADD COLUMN background TEXT");
     const q = (sql) => this.db.prepare(sql);
     this.q = {
       getRoom: q("SELECT * FROM rooms WHERE name = ?"),
       insertRoom: q("INSERT INTO rooms (name, owner_id, pw_salt, pw_hash, created_at, last_activity, seq, colors) VALUES (?, ?, ?, ?, ?, ?, 0, '{}')"),
       touchRoom: q("UPDATE rooms SET last_activity = ?, seq = ? WHERE name = ?"),
       saveColors: q("UPDATE rooms SET colors = ? WHERE name = ?"),
+      saveBackground: q("UPDATE rooms SET background = ? WHERE name = ?"),
       deleteRoom: q("DELETE FROM rooms WHERE name = ?"),
       getMessages: q("SELECT * FROM messages WHERE room = ? ORDER BY seq"),
       insertMessage: q(`INSERT INTO messages (id, room, seq, temp_id, author_id, name, color, kind, text, src, created_at, edited_at, reactions)
@@ -74,6 +78,7 @@ export class Db {
       lastActivity: row.last_activity,
       seq: row.seq,
       colors: new Map(Object.entries(JSON.parse(row.colors))),
+      background: row.background ?? null,
       messages: this.q.getMessages.all(name).map((m) => ({
         id: m.id,
         seq: m.seq,
@@ -97,6 +102,10 @@ export class Db {
 
   saveColors(room) {
     this.q.saveColors.run(JSON.stringify(Object.fromEntries(room.colorByAuthor)), room.name);
+  }
+
+  saveBackground(room) {
+    this.q.saveBackground.run(room.background, room.name);
   }
 
   /** Adds a message and drops any trimmed ones in a single transaction. */

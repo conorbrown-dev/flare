@@ -8,6 +8,7 @@ export const LIMITS = {
   password: 128,
   text: 4000,
   imageBytes: 3_500_000, // base64 characters of a data URL (~2.6 MB binary)
+  backgroundBytes: 3_500_000, // same limit for a room's custom background
   roomImageBytes: 60_000_000, // all images kept in one room's history
   history: 500, // messages kept per room
   reactionsPerMessage: 20,
@@ -82,6 +83,7 @@ class Room {
     this.imageBytes = this.messages.reduce((n, m) => n + (m.kind === "image" ? m.src.length : 0), 0);
     this.connections = new Map(); // connection -> member
     this.colorByAuthor = saved?.colors ?? new Map(); // keeps someone's color if they rejoin
+    this.background = saved?.background ?? null; // custom background image (data URL); null = default space scene
   }
 
   get hasPassword() { return this.password !== null; }
@@ -309,6 +311,19 @@ export class RoomStore {
     }
     this.db?.updateMessage(room, msg);
     return msg;
+  }
+
+  /** The room's creator can set a custom background image, or pass null for the default. */
+  setBackground(room, member, { src }) {
+    if (room.ownerId !== member.authorId) throw new ChatError("forbidden", "Only the person who started the room can change its background.");
+    if (src != null) {
+      if (typeof src !== "string" || src.length > LIMITS.backgroundBytes) throw new ChatError("too_large", "That image is too large.");
+      if (!DATA_IMAGE.test(src)) throw new ChatError("invalid", "Backgrounds can be PNG, JPEG, GIF or WebP images.");
+    }
+    room.background = src ?? null;
+    room.lastActivity = Date.now();
+    this.db?.saveBackground(room);
+    return room.background;
   }
 
   deleteRoom(room, member) {

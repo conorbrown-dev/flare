@@ -164,6 +164,7 @@ wss.on("connection", (ws, req) => {
           room: room.name,
           created: joined.created,
           hasPassword: room.hasPassword,
+          background: room.background,
           you: { ...member, isOwner: room.ownerId === member.authorId },
           members: room.members(),
           messages: room.messages.map(publicMessage),
@@ -197,6 +198,10 @@ wss.on("connection", (ws, req) => {
       if (msg.type === "react") {
         const message = store.react(room, member, msg);
         return broadcast(room, { type: "message_updated", message: publicMessage(message) });
+      }
+      if (msg.type === "set_background") {
+        const background = store.setBackground(room, member, msg);
+        return broadcast(room, { type: "room_updated", background, by: member.name });
       }
       if (msg.type === "delete_room") {
         store.deleteRoom(room, member);

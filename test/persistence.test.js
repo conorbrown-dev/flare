@@ -10,6 +10,7 @@ import fs from "node:fs";
 import WebSocket from "ws";
 
 const PORT = 3998;
+const BG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 const DB_FILE = path.join(os.tmpdir(), `flare-persist-${randomUUID()}.db`);
 
 function startServer() {
@@ -72,6 +73,8 @@ test("rooms survive a restart", async (t) => {
   a.ws.send(JSON.stringify({ type: "edit", id: byText("first"), text: "first (edited)" }));
   b.ws.send(JSON.stringify({ type: "react", id: byText("first"), emoji: "🔥" }));
   a.ws.send(JSON.stringify({ type: "delete", id: byText("to be deleted") }));
+  a.ws.send(JSON.stringify({ type: "set_background", src: BG }));
+  await waitFor(a.inbox, "room_updated");
   await waitFor(a.inbox, "message_deleted");
   await waitFor(a.inbox, "message_updated", 2);
   // A second room that gets deleted must stay deleted.
@@ -93,6 +96,7 @@ test("rooms survive a restart", async (t) => {
     const ann2 = await join("keeper", "Ann", ann, "s3cret");
     const { reply } = ann2;
     assert.equal(reply.you.isOwner, true, "creator is still the owner");
+    assert.equal(reply.background, BG, "custom background kept");
     assert.equal(reply.you.color, a.reply.you.color, "Ann keeps her color");
     const expected = sent.filter((m) => m.text !== "to be deleted").map((m) => (m.text === "first" ? "first (edited)" : m.text));
     assert.deepEqual(reply.messages.map((m) => m.text), expected, "history in the same order, deletion kept");

@@ -18,7 +18,7 @@ function readAsDataUrl(blob: Blob): Promise<string> {
  * they upload quickly on mobile data. GIFs are sent untouched (re-encoding would
  * freeze the animation), so they must already be small enough.
  */
-export async function prepareImage(file: File): Promise<string> {
+export async function prepareImage(file: File, maxSide = MAX_SIDE): Promise<string> {
   if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type) && !/^image\//.test(file.type)) {
     throw new Error("That file isn't an image.");
   }
@@ -33,7 +33,7 @@ export async function prepareImage(file: File): Promise<string> {
   } catch {
     throw new Error("Couldn't read that image. Try a PNG, JPEG, GIF or WebP.");
   }
-  const scale = Math.min(1, MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(bitmap.width * scale);
   canvas.height = Math.round(bitmap.height * scale);

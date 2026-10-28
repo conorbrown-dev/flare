@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { Backdrop } from "./components/Backdrop";
 import { ChatScreen } from "./components/ChatScreen";
 import { savedName, savedPassword, saveName, savePassword } from "./lib/storage";
 
@@ -16,7 +17,7 @@ type Phase =
 function Frame({ children }: { children: ReactNode }) {
   return (
     <main className="min-h-dvh grid place-items-center p-4 pt-[max(1rem,env(safe-area-inset-top))]">
-      <div className="w-full max-w-sm bg-panel border border-line p-5 flex flex-col gap-4">{children}</div>
+      <div className="w-full max-w-sm bg-panel/85 border border-line p-5 flex flex-col gap-4 shadow-2xl">{children}</div>
     </main>
   );
 }
@@ -122,6 +123,16 @@ function JoinForm({ info, error, onJoin }: { info: RoomInfo; error?: string; onJ
 }
 
 export default function App() {
+  const [background, setBackground] = useState<string | null>(null);
+  return (
+    <>
+      <Backdrop image={background} />
+      <Screens onBackground={setBackground} />
+    </>
+  );
+}
+
+function Screens({ onBackground }: { onBackground: (image: string | null) => void }) {
   const raw = decodeURIComponent(location.pathname.replace(/^\/+|\/+$/g, ""));
   const room = raw.toLowerCase();
   const valid = ROOM_RE.test(room);
@@ -186,6 +197,7 @@ export default function App() {
             check(message); // re-check: the room may have been created by someone else meanwhile
           }}
           onDeleted={(by, byMe) => { savePassword(room, null); setPhase({ at: "deleted", by, byMe }); }}
+          onBackground={onBackground}
         />
       );
     case "deleted":

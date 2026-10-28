@@ -8,7 +8,8 @@ export type ChatEvent =
   | { type: "message"; message: Message }
   | { type: "join" | "leave"; member: Member }
   | { type: "error"; message: string }
-  | { type: "deleted"; by: string };
+  | { type: "deleted"; by: string }
+  | { type: "background"; by: string; background: string | null };
 
 type Options = {
   room: string;
@@ -35,6 +36,7 @@ export function useChat({ room, name, password, onEvent }: Options) {
   const [members, setMembers] = useState<Member[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [system, setSystem] = useState<SystemLine[]>([]);
+  const [background, setBackground] = useState<string | null>(null);
 
   const ws = useRef<WebSocket | null>(null);
   const meRef = useRef<Me | null>(null);
@@ -85,6 +87,7 @@ export function useChat({ room, name, password, onEvent }: Options) {
             meRef.current = msg.you;
             setMe(msg.you);
             setMembers(msg.members);
+            setBackground(msg.background ?? null);
             setJoinError(null);
             setStatus("open");
             const server: Message[] = msg.messages;
@@ -119,6 +122,10 @@ export function useChat({ room, name, password, onEvent }: Options) {
             onEventRef.current({ type: msg.event, member: msg.member });
             break;
           }
+          case "room_updated":
+            setBackground(msg.background ?? null);
+            onEventRef.current({ type: "background", by: msg.by, background: msg.background ?? null });
+            break;
           case "room_deleted":
             stopped.current = true;
             setStatus("deleted");
@@ -211,11 +218,12 @@ export function useChat({ room, name, password, onEvent }: Options) {
   const offline = () => onEventRef.current({ type: "error", message: "You're offline. Try again when reconnected." });
 
   return {
-    status, joinError, me, members, messages, system,
+    status, joinError, me, members, messages, system, background,
     send, retryFailed, discardFailed,
     edit: (id: string, text: string) => raw({ type: "edit", id, text }) || offline(),
     remove: (id: string) => raw({ type: "delete", id }) || offline(),
     react: (id: string, emoji: string) => raw({ type: "react", id, emoji }) || offline(),
     deleteRoom: () => raw({ type: "delete_room" }) || offline(),
+    setBackground: (src: string | null) => raw({ type: "set_background", src }) || offline(),
   };
 }

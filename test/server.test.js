@@ -216,3 +216,25 @@ test("bad room names are rejected", async () => {
   assert.equal((await a.join("has space", "Ann")).code, "invalid");
   await a.close();
 });
+
+test("only the room's creator can change the background; everyone is told", async () => {
+  const name = room();
+  const a = await client(); const b = await client();
+  assert.equal((await a.join(name, "Ann")).background, null, "new rooms use the default space background");
+  await b.join(name, "Ben");
+  const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  b.send({ type: "set_background", src: png });
+  assert.equal((await b.next("error")).code, "forbidden");
+  a.send({ type: "set_background", src: "https://evil.example.com/bg.png" });
+  assert.equal((await a.next("error")).code, "invalid");
+  a.send({ type: "set_background", src: png });
+  const update = await b.next("room_updated");
+  assert.equal(update.background, png);
+  assert.equal(update.by, "Ann");
+  await a.next("room_updated");
+  const c = await client();
+  assert.equal((await c.join(name, "Cat")).background, png, "newcomers get the custom background");
+  a.send({ type: "set_background", src: null });
+  assert.equal((await b.next("room_updated")).background, null, "back to the default");
+  await Promise.all([a, b, c].map((x) => x.close()));
+});

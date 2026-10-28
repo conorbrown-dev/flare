@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { colorFor } from "../lib/colors";
 import { notificationPermission, notify, requestNotifications } from "../lib/notify";
+import { prepareImage } from "../lib/media";
 import { notificationsWanted, setNotificationsWanted, uid } from "../lib/storage";
 import type { Message } from "../lib/types";
 import { useChat, type ChatEvent } from "../lib/useChat";
@@ -17,6 +18,7 @@ type Props = {
   password: string | null;
   onJoinError: (code: string, message: string) => void;
   onDeleted: (by: string, byMe: boolean) => void;
+  onBackground: (image: string | null) => void;
 };
 
 const dayLabel = (ms: number) => {
@@ -34,12 +36,12 @@ function preview(m: Message) {
   return m.text ?? "";
 }
 
-export function ChatScreen({ room, name, password, onJoinError, onDeleted }: Props) {
+export function ChatScreen({ room, name, password, onJoinError, onDeleted, onBackground }: Props) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [unread, setUnread] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
-  const [sheet, setSheet] = useState<null | "members" | "menu" | "delete-room" | { reactTo: string } | { confirmDelete: Message } | { image: string }>(null);
+  const [sheet, setSheet] = useState<null | "members" | "menu" | "delete-room" | "background" | { reactTo: string } | { confirmDelete: Message } | { image: string }>(null);
   const [notifyOn, setNotifyOn] = useState(() => notificationsWanted() && notificationPermission() === "granted");
   const [dragging, setDragging] = useState(false);
   const deletedByMe = useRef(false);
@@ -59,6 +61,8 @@ export function ChatScreen({ room, name, password, onJoinError, onDeleted }: Pro
     } else if (e.type === "leave") {
       toast(`${e.member.name} left the room`);
       notify(`#${room}`, `${e.member.name} left the room`, `room-${room}-presence`);
+    } else if (e.type === "background") {
+      toast(e.background ? `${e.by} changed the room background` : `${e.by} switched the room back to the space background`);
     } else if (e.type === "error") {
       toast(e.message, "error");
     } else if (e.type === "deleted") {
@@ -69,6 +73,23 @@ export function ChatScreen({ room, name, password, onJoinError, onDeleted }: Pro
 
   const chat = useChat({ room, name, password, onEvent });
   const { status, me, members, messages, system } = chat;
+
+  // The page background lives above this screen (in App); keep it in sync with the room.
+  useEffect(() => { onBackground(chat.background); }, [chat.background]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => onBackground(null), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [bgBusy, setBgBusy] = useState(false);
+  const bgInput = useRef<HTMLInputElement>(null);
+  async function uploadBackground(file: File) {
+    setBgBusy(true);
+    try {
+      chat.setBackground(await prepareImage(file, 2048));
+      setSheet(null);
+    } catch (err) {
+      toast((err as Error).message || "Couldn't use that image.", "error");
+    } finally {
+      setBgBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (status === "join_error" && chat.joinError) onJoinError(chat.joinError.code, chat.joinError.message);
@@ -201,7 +222,7 @@ export function ChatScreen({ room, name, password, onJoinError, onDeleted }: Pro
 
   return (
     <div
-      className="flex flex-col h-dvh w-full max-w-3xl mx-auto bg-bg sm:border-x sm:border-line relative"
+      className="flex flex-col h-dvh w-full max-w-3xl mx-auto bg-[#07080d]/55 sm:border-x sm:border-line/70 relative"
       onClick={(e) => { if (selected && !(e.target as HTMLElement).closest(".msg")) setSelected(null); }}
       onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); setDragging(true); } }}
       onDragLeave={(e) => { if (e.currentTarget === e.target) setDragging(false); }}
@@ -212,7 +233,7 @@ export function ChatScreen({ room, name, password, onJoinError, onDeleted }: Pro
       }}
     >
       {/* Header */}
-      <header className="flex-none flex items-center gap-1 h-14 pl-3 pr-1 border-b border-line bg-panel pt-[env(safe-area-inset-top)] box-content">
+      <header className="flex-none flex items-center gap-1 h-14 pl-3 pr-1 border-b border-line bg-panel/90 pt-[env(safe-area-inset-top)] box-content">
         <div className="flex-1 min-w-0">
           <h1 className="text-[15px] font-semibold truncate">
             <span className="text-primary">#</span>{room}
@@ -319,6 +340,9 @@ export function ChatScreen({ room, name, password, onJoinError, onDeleted }: Pro
         <Sheet title={`#${room}`} onClose={() => setSheet(null)}>
           <div className="flex flex-col gap-2">
             <button className="btn text-left !py-3" onClick={shareLink}>Share room link</button>
+            {me?.isOwner && (
+              <button className="btn text-left !py-3" onClick={() => setSheet("background")}>Change background…</button>
+            )}
             <button className="btn text-left !py-3" onClick={() => { setSheet(null); toggleNotifications(); }}>
               {notifyOn ? "Turn notifications off" : "Turn notifications on"}
             </button>
@@ -327,7 +351,34 @@ export function ChatScreen({ room, name, password, onJoinError, onDeleted }: Pro
               <button className="btn text-left !py-3 !text-primary !border-primary-dim" onClick={() => setSheet("delete-room")}>Delete room…</button>
             )}
           </div>
-          {me?.isOwner && <p className="text-[12px] text-dim mt-3">You started this room, so you can delete it.</p>}
+          {me?.isOwner && <p className="text-[12px] text-dim mt-3">You started this room, so you can change its background or delete it.</p>}
+        </Sheet>
+      )}
+
+      {sheet === "background" && (
+        <Sheet title="Room background" onClose={() => setSheet(null)}>
+          <p className="text-sm text-dim leading-relaxed mb-3">Everyone in #{room} sees this background.</p>
+          <div className="aspect-video w-full border border-line mb-3 relative overflow-hidden bg-[#05060b] grid place-items-center">
+            {chat.background
+              ? <img src={chat.background} alt="Current background" className="absolute inset-0 w-full h-full object-cover" />
+              : <span className="text-[12px] uppercase tracking-[0.12em] text-dim">Space (default)</span>}
+          </div>
+          <div className="flex flex-col gap-2">
+            <button className="btn primary !py-3" disabled={bgBusy} onClick={() => bgInput.current?.click()}>
+              {bgBusy ? "Preparing image…" : "Upload an image"}
+            </button>
+            {chat.background && (
+              <button className="btn !py-3" onClick={() => { chat.setBackground(null); setSheet(null); }}>Use the space background</button>
+            )}
+          </div>
+          <p className="text-[12px] text-dim mt-3">Large photos are resized automatically. A dark tint is added so messages stay easy to read.</p>
+          <input
+            ref={bgInput}
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            hidden
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadBackground(f); e.target.value = ""; }}
+          />
         </Sheet>
       )}
 
